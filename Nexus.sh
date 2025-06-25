@@ -164,7 +164,6 @@ function batch_uninstall_nodes() {
 
 # === MAIN MENU ===
 while true; do
-    show_header
     echo -e "${GREEN} 1.${RESET} ➤ Install & Run Node"
     echo -e "${GREEN} 2.${RESET} ❌ Remove Specific Node"
     echo -e "${GREEN} 3.${RESET} 🧾 View Node Logs"
