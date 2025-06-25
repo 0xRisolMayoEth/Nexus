@@ -1,5 +1,4 @@
 #!/bin/bash
-set -e
 
 # === Basic Configuration ===
 BASE_CONTAINER_NAME="nexus-node"
