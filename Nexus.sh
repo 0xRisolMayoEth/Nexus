@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 # === Basic Configuration ===
 BASE_CONTAINER_NAME="nexus-node"
@@ -12,7 +13,15 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 RESET='\033[0m'
 
-# === Check Docker ===
+# === Header Display ===
+function show_header() {
+    clear
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo -e "           NEXUS - Airdrop Node"
+    echo -e "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+}
+
+# === Check Docker Installation ===
 function check_docker() {
     if ! command -v docker >/dev/null 2>&1; then
         echo -e "${YELLOW}Docker not found. Installing Docker...${RESET}"
@@ -30,7 +39,7 @@ function check_docker() {
 # === Check Cron ===
 function check_cron() {
     if ! command -v cron >/dev/null 2>&1; then
-        echo -e "${YELLOW}Cron not found. Installing cron...${RESET}"
+        echo -e "${YELLOW}Cron is not available. Installing cron...${RESET}"
         apt update
         apt install -y cron
         systemctl enable cron
@@ -79,7 +88,7 @@ sleep 3
 if screen -list | grep -q "nexus"; then
     echo "Node is running in the background"
 else
-    echo "Failed to start node"
+    echo "Failed to start the node"
     cat /root/nexus.log
     exit 1
 fi
@@ -91,7 +100,7 @@ EOF
     rm -rf "$WORKDIR"
 }
 
-# === Run Docker Container ===
+# === Run Container ===
 function run_container() {
     local node_id=$1
     local container_name="${BASE_CONTAINER_NAME}-${node_id}"
@@ -122,67 +131,123 @@ function get_all_nodes() {
     docker ps -a --format "{{.Names}}" | grep "^${BASE_CONTAINER_NAME}-" | sed "s/${BASE_CONTAINER_NAME}-//"
 }
 
+# === List All Nodes ===
+function list_nodes() {
+    show_header
+    echo -e "${CYAN}📊 Registered Nodes:${RESET}"
+    echo "--------------------------------------------------------------"
+    printf "%-5s %-20s %-12s %-15s %-15s\n" "No" "Node ID" "Status" "CPU" "Memory"
+    echo "--------------------------------------------------------------"
+    local all_nodes=($(get_all_nodes))
+    local failed_nodes=()
+    for i in "${!all_nodes[@]}"; do
+        local node_id=${all_nodes[$i]}
+        local container="${BASE_CONTAINER_NAME}-${node_id}"
+        local cpu="N/A"
+        local mem="N/A"
+        local status="Inactive"
+        if docker inspect "$container" &>/dev/null; then
+            status=$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null)
+            if [[ "$status" == "running" ]]; then
+                stats=$(docker stats --no-stream --format "{{.CPUPerc}}|{{.MemUsage}}" "$container" 2>/dev/null)
+                cpu=$(echo "$stats" | cut -d'|' -f1)
+                mem=$(echo "$stats" | cut -d'|' -f2 | cut -d'/' -f1 | xargs)
+            elif [[ "$status" == "exited" ]]; then
+                failed_nodes+=("$node_id")
+            fi
+        fi
+        printf "%-5s %-20s %-12s %-15s %-15s\n" "$((i+1))" "$node_id" "$status" "$cpu" "$mem"
+    done
+    echo "--------------------------------------------------------------"
+    if [ ${#failed_nodes[@]} -gt 0 ]; then
+        echo -e "${RED}⚠️ Failed to start node(s) (exited):${RESET}"
+        for id in "${failed_nodes[@]}"; do
+            echo "- $id"
+        done
+    fi
+    read -p "Press enter to return to menu..."
+}
 
 # === View Node Logs ===
 function view_logs() {
-    local nodes=($(get_all_nodes))
-    if [ ${#nodes[@]} -eq 0 ]; then
+    local all_nodes=($(get_all_nodes))
+    if [ ${#all_nodes[@]} -eq 0 ]; then
         echo "No nodes found."
-        read -p "Press enter to continue..."
+        read -p "Press enter..."
         return
     fi
     echo "Select a node to view logs:"
-    for i in "${!nodes[@]}"; do
-        echo "$((i+1)). ${nodes[$i]}"
+    for i in "${!all_nodes[@]}"; do
+        echo "$((i+1)). ${all_nodes[$i]}"
     done
     read -rp "Number: " choice
-    if [[ "$choice" =~ ^[0-9]+$ && choice -ge 1 && choice -le ${#nodes[@]} ]]; then
-        local selected=${nodes[$((choice-1))]}
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice > 0 && choice <= ${#all_nodes[@]} )); then
+        local selected=${all_nodes[$((choice-1))]}
         echo -e "${YELLOW}Showing logs for node: $selected${RESET}"
         docker logs -f "${BASE_CONTAINER_NAME}-${selected}"
-    else
-        echo "Invalid choice. Skipped."
     fi
-    read -p "Press enter to continue..."
+    read -p "Press enter..."
 }
 
 # === Uninstall Multiple Nodes ===
 function batch_uninstall_nodes() {
-    local nodes=($(get_all_nodes))
-    echo "Enter the numbers of the nodes to uninstall (space-separated):"
-    for i in "${!nodes[@]}"; do
-        echo "$((i+1)). ${nodes[$i]}"
+    local all_nodes=($(get_all_nodes))
+    echo "Enter the numbers of the nodes to uninstall (separated by space):"
+    for i in "${!all_nodes[@]}"; do
+        echo "$((i+1)). ${all_nodes[$i]}"
     done
     read -rp "Numbers: " input
-    for i in $input; do
-        [[ "$i" =~ ^[0-9]+$ && i -ge 1 && i -le ${#nodes[@]} ]] \
-            && uninstall_node "${nodes[$((i-1))]}" \
-            || echo "Skipped: $i"
+    for num in $input; do
+        if [[ "$num" =~ ^[0-9]+$ ]] && (( num > 0 && num <= ${#all_nodes[@]} )); then
+            uninstall_node "${all_nodes[$((num-1))]}"
+        else
+            echo "Skipped: $num"
+        fi
     done
-    read -p "Press enter to continue..."
+    read -p "Press enter..."
+}
+
+# === Uninstall All Nodes ===
+function uninstall_all_nodes() {
+    local all_nodes=($(get_all_nodes))
+    echo "Are you sure you want to remove ALL nodes? (y/n)"
+    read -rp "Confirm: " confirm
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        for node in "${all_nodes[@]}"; do
+            uninstall_node "$node"
+        done
+        echo "All nodes have been removed."
+    else
+        echo "Cancelled."
+    fi
+    read -p "Press enter..."
 }
 
 # === MAIN MENU ===
 while true; do
+    show_header
     echo -e "${GREEN} 1.${RESET} ➤ Install & Run Node"
-    echo -e "${GREEN} 2.${RESET} ❌ Remove Specific Node"
-    echo -e "${GREEN} 3.${RESET} 🧾 View Node Logs"
-    echo -e "${GREEN} 4.${RESET} 🚪 Exit"
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    read -rp "Select an option (1-6): " choice
+    echo -e "${GREEN} 2.${RESET} 📊 View All Node Status"
+    echo -e "${GREEN} 3.${RESET} ❌ Remove Specific Node"
+    echo -e "${GREEN} 4.${RESET} 🧾 View Node Logs"
+    echo -e "${GREEN} 5.${RESET} 💥 Remove All Nodes"
+    echo -e "${GREEN} 6.${RESET} 🚪 Exit"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    read -rp "Choose an option (1–6): " choice
     case $choice in
         1)
             check_docker
             read -rp "Enter NODE_ID: " NODE_ID
-            [ -z "$NODE_ID" ] && echo "NODE_ID cannot be empty." && read -p "Press enter to continue..." && continue
+            [ -z "$NODE_ID" ] && echo "NODE_ID cannot be empty." && read -p "Press enter..." && continue
             build_image
             run_container "$NODE_ID"
-            read -p "Press enter to continue..."
+            read -p "Press enter..."
             ;;
-        2) batch_uninstall_nodes ;;
-        3) view_logs ;;
-        4) echo "Exiting..."; exit 0 ;;
-        *) echo "Invalid option."; read -p "Press enter to continue..." ;;
+        2) list_nodes ;;
+        3) batch_uninstall_nodes ;;
+        4) view_logs ;;
+        5) uninstall_all_nodes ;;
+        6) echo "Exiting..."; exit 0 ;;
+        *) echo "Invalid option."; read -p "Press enter..." ;;
     esac
 done
-
