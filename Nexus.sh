@@ -231,9 +231,9 @@ while true; do
     echo -e "${GREEN} 3.${RESET} ❌ Remove Specific Node"
     echo -e "${GREEN} 4.${RESET} 🧾 View Node Logs"
     echo -e "${GREEN} 5.${RESET} 💥 Remove All Nodes"
-    echo -e "${GREEN} 6.${RESET} 🚪 Exit"
+    echo -e "${GREEN} ${RESET} 🚪 ~CTRL + C for Exit~"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    read -rp "Choose an option (1–6): " choice
+    read -rp "Choose an option (1–5): " choice
     case $choice in
         1)
             check_docker
@@ -247,7 +247,6 @@ while true; do
         3) batch_uninstall_nodes ;;
         4) view_logs ;;
         5) uninstall_all_nodes ;;
-        6) echo "Exiting..."; exit 0 ;;
         *) echo "Invalid option."; read -p "Press enter..." ;;
     esac
 done
